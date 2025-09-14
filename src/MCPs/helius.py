@@ -97,6 +97,72 @@ def get_priority_fee_estimate(
     """Priority fee estimate. Provide transaction or account_keys."""
     return _as_dict(_service.get_priority_fee_estimate(network, transaction, account_keys, priority_level))
 
+def get_signature_statuses(
+    signatures: List[str],
+    network: str = "mainnet",
+    search_transaction_history: bool = False,
+    commitment: Optional[str] = None,
+) -> List[Optional[Dict[str, Any]]]:
+    """Statuses for multiple signatures (processed/confirmed/finalized)."""
+    return _as_dict(
+        _service.get_signature_statuses(signatures, network, search_transaction_history, commitment)
+    )
+
+
+def get_multiple_accounts(
+    pubkeys: List[str],
+    network: str = "mainnet",
+    encoding: str = "jsonParsed",
+    commitment: Optional[str] = None,
+    data_slice: Optional[Dict[str, int]] = None,
+    min_context_slot: Optional[int] = None,
+    changed_since_slot: Optional[int] = None,
+) -> List[Optional[Dict[str, Any]]]:
+    """Batch account info for many pubkeys."""
+    return _as_dict(
+        _service.get_multiple_accounts(
+            pubkeys,
+            network,
+            encoding,
+            commitment,
+            data_slice,
+            min_context_slot,
+            changed_since_slot,
+        )
+    )
+
+
+def get_program_accounts(
+    program_id: str,
+    network: str = "mainnet",
+    encoding: str = "base64",
+    filters: Optional[List[Dict[str, Any]]] = None,
+    data_slice: Optional[Dict[str, int]] = None,
+    commitment: Optional[str] = None,
+    changed_since_slot: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Accounts owned by a program with optional filters."""
+    return _as_dict(
+        _service.get_program_accounts(
+            program_id,
+            network,
+            encoding,
+            filters,
+            data_slice,
+            commitment,
+            changed_since_slot,
+        )
+    )
+
+
+def get_token_largest_accounts(
+    mint: str,
+    network: str = "mainnet",
+    commitment: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Top 20 largest accounts for a token mint."""
+    return _as_dict(_service.get_token_largest_accounts(mint, network, commitment))
+
 
 # --- DAS (assets & portfolios) ---------------------------------------------
 
@@ -202,6 +268,10 @@ def register_mcp_tools() -> None:
     mcp.tool()(get_transaction_raw)
     mcp.tool()(simulate_transaction)
     mcp.tool()(get_priority_fee_estimate)
+    mcp.tool()(get_signature_statuses)
+    mcp.tool()(get_multiple_accounts)
+    mcp.tool()(get_program_accounts)
+    mcp.tool()(get_token_largest_accounts)
     mcp.tool()(get_asset)
     mcp.tool()(get_assets_by_owner)
     mcp.tool()(search_assets)

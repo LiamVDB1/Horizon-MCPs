@@ -54,3 +54,45 @@ def test_service_priority_fee_int_result() -> None:
     assert isinstance(out, dict) and out["micro_lamports"] == 17
 
 
+def test_summarize_enhanced_tx_token_amount_float() -> None:
+    from helius.transforms import summarize_enhanced_tx
+    tx = {
+        "signature": "sig",
+        "slot": 1,
+        "timestamp": 123,
+        "type": "TRANSFER",
+        "source": "SPL_TOKEN",
+        "fee": 5000,
+        "tokenTransfers": [
+            {
+                "mint": "mint",
+                "fromUserAccount": "fromU",
+                "toUserAccount": "toU",
+                "tokenAmount": 0.5,
+                "decimals": 6,
+            }
+        ],
+    }
+    out = summarize_enhanced_tx(tx)
+    assert out.signature == "sig"
+    assert out.token_transfers and out.token_transfers[0].amount == "0.5"
+    assert out.token_transfers[0].decimals == 6
+
+
+
+def test_summarize_account_info_uses_raw_model() -> None:
+    from helius.transforms import summarize_account_info
+    value = {
+        "lamports": 123,
+        "owner": "11111111111111111111111111111111",
+        "executable": False,
+        "rentEpoch": 99,
+        "space": 42,
+    }
+    info = summarize_account_info(value)
+    assert info.lamports == 123
+    assert info.owner == "11111111111111111111111111111111"
+    assert info.rent_epoch == 99
+    assert info.space == 42
+
+

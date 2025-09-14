@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     # Prefer global settings from top-level config, fall back to env
-    from config import settings  # type: ignore
+    from src.config import settings  # type: ignore
 except Exception:
     settings = None  # type: ignore
 from src.common.http import HttpClient

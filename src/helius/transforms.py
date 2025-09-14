@@ -7,6 +7,7 @@ from .schemas import (
     NativeTransfer,
     TokenTransfer,
     SignatureInfo,
+    SignatureStatus,
     TxRawSummary,
     SimulationSummary,
     PriorityFeeSummary,
@@ -16,61 +17,91 @@ from .schemas import (
     TokenAccountsResult,
     TokenAccountSummary,
     AccountInfoSummary,
+    ProgramAccountSummary,
+    RawEnhancedTransaction,
+    RawSignatureForAddressItem,
+    RawGetTransaction,
+    RawSimulateTransactionResponse,
+    RawPriorityFeeEstimate,
+    RawDasAsset,
+    RawDasAssetsPage,
+    RawDasTokenAccountsResult,
+    RawGetBalanceResult,
+    RawGetAccountInfoResult,
+    RawAccountInfoValue,
+    RawSignatureStatus,
+    RawGetSignatureStatusesResult,
+    RawGetMultipleAccountsResult,
+    RawProgramAccount,
+    RawTokenLargestAccounts,
+    RawTokenLargestAccountItem,
+    TokenLargestAccountItem,
 )
 
 
 def summarize_enhanced_tx(tx: Dict[str, Any]) -> EnhancedTxSummary:
-    signature = tx.get("signature")
-    slot = tx.get("slot")
-    timestamp = tx.get("timestamp")
-    tx_type = tx.get("type")
-    source = tx.get("source")
-    fee = tx.get("fee")
+    raw = RawEnhancedTransaction.model_validate(tx)
+
+    signature = raw.signature
+    slot = raw.slot
+    timestamp = raw.timestamp
+    tx_type = raw.type
+    source = raw.source
+    fee = raw.fee
+    transaction_error = raw.transaction_error
 
     succeeded: Optional[bool] = None
-    status = tx.get("status") or tx.get("transactionError")
+    status = raw.status if raw.status is not None else raw.transaction_error
     if status is not None:
         if isinstance(status, str):
             succeeded = status.lower() == "success"
         elif isinstance(status, dict):
-            succeeded = status.get("InstructionError") is None and status.get("err") is None
+            # Heuristics: consider InstructionError/err keys as failure
+            succeeded = (status.get("InstructionError") is None) and (status.get("err") is None)
 
     native_transfers: List[NativeTransfer] = []
-    for nt in tx.get("nativeTransfers", []) or []:
+    for nt in raw.native_transfers or []:
         try:
-            native_transfers.append(NativeTransfer(
-                from_addr=nt.get("fromUserAccount") or nt.get("from") or "",
-                to_addr=nt.get("toUserAccount") or nt.get("to") or "",
-                amount_lamports=int(nt.get("amount", 0)),
-            ))
+            native_transfers.append(
+                NativeTransfer(
+                    from_addr=(nt.from_user_account or nt.from_ or ""),
+                    to_addr=(nt.to_user_account or nt.to_ or ""),
+                    amount_lamports=int(nt.amount or 0),
+                )
+            )
         except Exception:
             continue
 
     token_transfers: List[TokenTransfer] = []
-    for tt in tx.get("tokenTransfers", []) or []:
-        amount_val = tt.get("tokenAmount", "")
-        amount_str = str(amount_val if amount_val is not None else "")
+    for tt in raw.token_transfers or []:
+        # amount might be string/int or object with amount field
+        amount_str: str = ""
+        if isinstance(tt.token_amount, dict):
+            val = tt.token_amount.get("amount")
+            amount_str = str(val) if val is not None else ""
+        elif isinstance(tt.token_amount, (int, str, float)):
+            amount_str = str(tt.token_amount)
+
         decimals_val: Optional[int] = None
-        dv = tt.get("decimals")
-        if isinstance(dv, int):
-            decimals_val = dv
-        else:
-            ta = tt.get("tokenAmount")
-            if isinstance(ta, dict):
-                d2 = ta.get("decimals")
-                try:
-                    if d2 is not None:
-                        decimals_val = int(d2)
-                except Exception:
-                    decimals_val = None
-        t = TokenTransfer(
-            mint=tt.get("mint") or "",
-            from_addr=tt.get("fromUserAccount") or tt.get("fromTokenAccount") or tt.get("from") or "",
-            to_addr=tt.get("toUserAccount") or tt.get("toTokenAccount") or tt.get("to") or "",
-            amount=amount_str,
-            decimals=decimals_val,
+        if isinstance(tt.decimals, int):
+            decimals_val = tt.decimals
+        elif isinstance(tt.token_amount, dict):
+            d2 = tt.token_amount.get("decimals")
+            try:
+                if d2 is not None:
+                    decimals_val = int(d2)
+            except Exception:
+                decimals_val = None
+
+        token_transfers.append(
+            TokenTransfer(
+                mint=tt.mint or "",
+                from_addr=(tt.from_user_account or tt.from_token_account or tt.from_ or ""),
+                to_addr=(tt.to_user_account or tt.to_token_account or tt.to_ or ""),
+                amount=amount_str,
+                decimals=decimals_val,
+            )
         )
-        token_transfers.append(t)
 
     return EnhancedTxSummary(
         signature=signature,
@@ -80,80 +111,102 @@ def summarize_enhanced_tx(tx: Dict[str, Any]) -> EnhancedTxSummary:
         source=source,
         fee_lamports=fee,
         succeeded=succeeded,
+        transaction_error=transaction_error,
         native_transfers=native_transfers,
         token_transfers=token_transfers,
     )
 
 
 def summarize_signature_info(entry: Dict[str, Any]) -> SignatureInfo:
+    raw = RawSignatureForAddressItem.model_validate(entry)
     return SignatureInfo(
-        signature=entry.get("signature"),
-        slot=entry.get("slot"),
-        block_time=entry.get("blockTime"),
-        confirmation_status=entry.get("confirmationStatus"),
-        err=entry.get("err"),
+        signature=raw.signature,
+        slot=raw.slot,
+        block_time=raw.blockTime,
+        confirmation_status=raw.confirmationStatus,
+        err=raw.err,
     )
 
 
 def _extract_program_ids_from_transaction(tx: Dict[str, Any]) -> List[str]:
     program_ids: List[str] = []
     try:
-        message = (tx.get("transaction") or {}).get("message") or {}
-        instructions = message.get("instructions", []) or []
-        for ix in instructions:
-            pid = ix.get("programId") or ix.get("programIdIndex")
-            if isinstance(pid, str):
-                program_ids.append(pid)
+        parsed = RawGetTransaction.model_validate(tx)
+        if not (parsed.transaction and parsed.transaction.message):
+            return []
+
+        for ix in parsed.transaction.message.instructions:
+            pid_index = ix.programIdIndex
+            if isinstance(pid_index, int): # Indexed account
+                if not parsed.transaction.message.accountKeys or pid_index >= len(parsed.transaction.message.accountKeys):
+                    continue                        
+                account_key = parsed.transaction.message.accountKeys[pid_index]
+                if hasattr(account_key, 'pubkey'):
+                    program_ids.append(account_key.pubkey)
+                elif isinstance(account_key, str):
+                    program_ids.append(account_key)
+
+        # Deduplicate while preserving order
         seen = set()
         unique: List[str] = []
         for pid in program_ids:
             if pid not in seen:
                 unique.append(pid)
-                seen.add(pid)
+                seen.add(pid)            
         return unique
     except Exception:
         return []
 
 
 def summarize_raw_transaction(tx: Dict[str, Any]) -> TxRawSummary:
-    meta = tx.get("meta") or {}
-    logs = meta.get("logMessages") or []
+    parsed = RawGetTransaction.model_validate(tx)
+    meta = parsed.meta or None
+    logs = (meta.logMessages if meta else None) or []
     if isinstance(logs, list) and len(logs) > 30:
         logs = logs[:15] + ["... (truncated) ..."] + logs[-14:]
+    sig = None
+    if parsed.transaction and parsed.transaction.signatures:
+        sig = parsed.transaction.signatures[0] if parsed.transaction.signatures else None
     return TxRawSummary(
-        signature=(tx.get("transaction") or {}).get("signatures", [None])[0],
-        slot=tx.get("slot"),
-        block_time=tx.get("blockTime"),
-        fee_lamports=meta.get("fee"),
-        compute_units_consumed=meta.get("computeUnitsConsumed"),
-        err=meta.get("err"),
+        signature=sig,
+        slot=parsed.slot,
+        block_time=parsed.blockTime,
+        fee_lamports=(meta.fee if meta else None),        
+        err=(meta.err if meta else None),
         program_ids=_extract_program_ids_from_transaction(tx),
         log_messages=logs if isinstance(logs, list) else [],
     )
 
 
 def summarize_simulation(res: Dict[str, Any]) -> SimulationSummary:
-    value = res.get("value") if isinstance(res, dict) else None
-    if not isinstance(value, dict):
+    parsed = RawSimulateTransactionResponse.model_validate(res)
+    value = parsed.value
+    if not value:
         return SimulationSummary(err=None, units_consumed=None, logs=[])
-    logs = value.get("logs") or []
+    logs = value.logs or []
     if isinstance(logs, list) and len(logs) > 50:
         logs = logs[:25] + ["... (truncated) ..."] + logs[-24:]
     return SimulationSummary(
-        err=value.get("err"),
-        units_consumed=value.get("unitsConsumed"),
+        err=value.err,
+        units_consumed=value.unitsConsumed,
         logs=logs if isinstance(logs, list) else [],
     )
 
 
 def summarize_priority_fee(result: Dict[str, Any]) -> PriorityFeeSummary:
-    levels_raw = result.get("priorityFeeLevels") or {}
+    parsed = RawPriorityFeeEstimate.model_validate(result)
     levels: Optional[PriorityFeeLevels] = None
-    if isinstance(levels_raw, dict) and levels_raw:
-        keep_keys = ["min", "low", "medium", "high", "veryHigh", "unsafeMax"]
-        levels = PriorityFeeLevels(**{k: int(levels_raw[k]) for k in keep_keys if k in levels_raw})
+    if parsed.priorityFeeLevels:
+        levels = PriorityFeeLevels(
+            min=parsed.priorityFeeLevels.min,
+            low=parsed.priorityFeeLevels.low,
+            medium=parsed.priorityFeeLevels.medium,
+            high=parsed.priorityFeeLevels.high,
+            veryHigh=parsed.priorityFeeLevels.veryHigh,
+            unsafeMax=parsed.priorityFeeLevels.unsafeMax,
+        )
     return PriorityFeeSummary(
-        micro_lamports=int(result.get("priorityFeeEstimate", 0)),
+        estimated_micro_lamports=int(parsed.priorityFeeEstimate or 0),
         levels=levels,
     )
 
@@ -218,80 +271,171 @@ def _extract_token_price(asset: Dict[str, Any]) -> Optional[float]:
 
 
 def summarize_asset(asset: Dict[str, Any]) -> AssetSummary:
-    name, symbol = _extract_name_symbol(asset)
+    parsed = RawDasAsset.model_validate(asset)
+    # Name and symbol
+    name = None
+    symbol = None
+    if parsed.content and parsed.content.metadata:
+        name = parsed.content.metadata.name
+        symbol = parsed.content.metadata.symbol
+    # Image
+    image = None
+    if parsed.content:
+        if parsed.content.files:
+            first = parsed.content.files[0]
+            if isinstance(first, dict):
+                image = first.get("uri")  # keep compatibility fallback
+            else:
+                image = first.uri
+        if not image and parsed.content.links:
+            image = parsed.content.links.image
+    # Owner
+    owner = parsed.ownership.owner if parsed.ownership else None
+    # Collection
+    collection = None
+    for g in parsed.grouping or []:
+        if (g.group_key == "collection" or g.group_key == "collectionId") and g.group_value:
+            collection = g.group_value
+            break    
+        
+
     return AssetSummary(
-        id=asset.get("id"),
+        id=parsed.id,
         name=name,
         symbol=symbol,
-        image=_first_file_image(asset),
-        owner=_extract_owner(asset),
-        collection=_extract_collection(asset),
-        compressed=bool((asset.get("compression") or {}).get("compressed", False)),
-        interface=asset.get("interface"),
-        token_price_usd=_extract_token_price(asset),
+        image=image,
+        owner=owner,
+        collection=collection,
+        compressed=bool(parsed.compression.compressed) if parsed.compression else False,
+        interface=parsed.interface,
     )
 
 
 def summarize_assets_page(result: Dict[str, Any]) -> AssetsPageSummary:
-    items_raw = result.get("items") or []
+    parsed = RawDasAssetsPage.model_validate(result)
     items: List[AssetSummary] = []
-    if isinstance(items_raw, list):
-        for it in items_raw:
-            if isinstance(it, dict):
-                items.append(summarize_asset(it))
-    native_balance = result.get("nativeBalance") or result.get("native_balance")
+    for it in parsed.items or []:
+        # RawDasAsset -> dict for reuse of summarize_asset
+        items.append(summarize_asset(it.model_dump(by_alias=True)))
+    native_balance = parsed.nativeBalance if parsed.nativeBalance is not None else parsed.native_balance
+    native_lamports: Optional[int] = None
     if isinstance(native_balance, dict):
         lamports = native_balance.get("lamports") or native_balance.get("amount")
-        native_lamports = int(lamports) if isinstance(lamports, (int, str)) and str(lamports).isdigit() else None
+        try:
+            if lamports is not None:
+                native_lamports = int(lamports)
+        except Exception:
+            native_lamports = None
     elif isinstance(native_balance, (int, str)):
-        native_lamports = int(native_balance)
-    else:
-        native_lamports = None
+        try:
+            native_lamports = int(native_balance)
+        except Exception:
+            native_lamports = None
     return AssetsPageSummary(
-        total=result.get("total"),
+        total=parsed.total,
         items=items,
         native_balance_lamports=native_lamports,
     )
 
 
 def summarize_token_accounts(result: Dict[str, Any]) -> TokenAccountsResult:
-    items_in = result.get("items") or result.get("token_accounts") or []
+    parsed = RawDasTokenAccountsResult.model_validate(result)
     out_items: List[TokenAccountSummary] = []
-    if isinstance(items_in, list):
-        for it in items_in:
-            if not isinstance(it, dict):
-                continue
-            token_account = it.get("token_account") or it.get("address") or it.get("id")
-            owner = it.get("owner") or it.get("ownerAddress")
-            mint = it.get("mint")
-            amount = None
-            decimals = None
-            ui_amount_str = None
-            bal = it.get("balance") or it.get("amount")
-            if isinstance(bal, dict):
-                amount = str(bal.get("amount")) if bal.get("amount") is not None else None
-                decimals = bal.get("decimals")
-                ui_amount_str = bal.get("uiAmountString") or bal.get("ui_amount_string")
-            elif isinstance(bal, (str, int)):
-                amount = str(bal)
-            out_items.append(TokenAccountSummary(
+    for it in parsed.items or []:
+        token_account = it.token_account or it.address or it.id
+        owner = it.owner or it.ownerAddress
+        mint = it.mint
+        amount: Optional[str] = None
+        decimals: Optional[int] = None
+        ui_amount_str: Optional[str] = None
+        if it.balance:
+            amount = str(it.balance.amount) if it.balance.amount is not None else None
+            decimals = it.balance.decimals
+            ui_amount_str = it.balance.uiAmountString
+        elif it.amount is not None:
+            amount = str(it.amount)
+        out_items.append(
+            TokenAccountSummary(
                 token_account=token_account,
                 owner=owner,
                 mint=mint,
                 amount=amount,
                 decimals=decimals,
                 ui_amount_string=ui_amount_str,
-            ))
-    return TokenAccountsResult(total=result.get("total"), items=out_items)
+            )
+        )
+    return TokenAccountsResult(total=parsed.total, items=out_items)
 
 
 def summarize_account_info(value: Dict[str, Any]) -> AccountInfoSummary:
+    raw = RawAccountInfoValue.model_validate(value)
     return AccountInfoSummary(
-        lamports=int(value.get("lamports", 0)),
-        owner=value.get("owner"),
-        executable=bool(value.get("executable", False)),
-        rent_epoch=int(value.get("rentEpoch", 0)),
-        space=value.get("space"),
+        lamports=int(raw.lamports or 0),
+        owner=raw.owner or "",
+        executable=bool(raw.executable or False),
+        rent_epoch=int(raw.rentEpoch or 0),
+        space=raw.space,
     )
 
+
+def summarize_signature_status(entry: Optional[Dict[str, Any]]) -> Optional[SignatureStatus]:
+    if entry is None:
+        return None
+    raw = RawSignatureStatus.model_validate(entry)
+    return SignatureStatus(
+        slot=raw.slot,
+        confirmations=raw.confirmations,
+        err=raw.err,
+        status=raw.status,
+        confirmation_status=raw.confirmationStatus,
+    )
+
+
+def summarize_multiple_accounts(result: Dict[str, Any]) -> List[Optional[AccountInfoSummary]]:
+    parsed = RawGetMultipleAccountsResult.model_validate(result)
+    out: List[Optional[AccountInfoSummary]] = []
+    for v in (parsed.value or []):
+        if v is None:
+            out.append(None)
+        elif isinstance(v, dict):
+            try:
+                # v can be RawAccountInfoValue or RawAccountStaticValue; only summarize the former
+                if "lamports" in v:
+                    out.append(summarize_account_info(v))
+                else:
+                    out.append(None)
+            except Exception:
+                out.append(None)
+        else:
+            try:
+                # v is a pydantic object (RawAccountInfoValue or RawAccountStaticValue)
+                if hasattr(v, 'lamports') and v.lamports is not None:
+                    # Convert pydantic object to dict for summarize_account_info
+                    out.append(summarize_account_info(v.model_dump(by_alias=True)))
+                else:
+                    out.append(None)
+            except Exception:
+                out.append(None)
+    return out
+
+
+def summarize_program_account(entry: Dict[str, Any]) -> ProgramAccountSummary:
+    raw = RawProgramAccount.model_validate(entry)
+    account_summary = summarize_account_info(raw.account.model_dump(by_alias=True))
+    return ProgramAccountSummary(pubkey=raw.pubkey, account=account_summary)
+
+
+def summarize_token_largest_accounts(result: Dict[str, Any]) -> List[TokenLargestAccountItem]:
+    parsed = RawTokenLargestAccounts.model_validate(result)
+    items: List[TokenLargestAccountItem] = []
+    for it in parsed.value or []:
+        items.append(
+            TokenLargestAccountItem(
+                address=it.address,
+                amount=it.amount,
+                decimals=it.decimals,
+                ui_amount_string=it.uiAmountString,
+            )
+        )
+    return items
 
