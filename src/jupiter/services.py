@@ -4,7 +4,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .client import JupiterClient
 from . import transforms as tf
-from . import schemas as sc
+from .schemas.swap import QuoteResponse, SwapRequest, SwapResponse, SwapInstructionsResponse
+from .schemas.ultra import HoldingsResponse, NativeHoldingsResponse, MintInformation as UltraMintInformation, OrderGetResponse as UltraOrderResponse
+from .schemas.trigger import CreateOrdersRequestBody as TriggerCreateRequest, CreateOrderPostResponse as TriggerTransactionResponse, CancelOrderPostRequest as TriggerCancelRequest, CancelOrdersRequestBody as TriggerCancelManyRequest, GetTriggerOrdersGetResponse
+from .schemas.recurring import CreateRecurring as RecurringCreateRequest, RecurringResponse, CloseRecurring as RecurringCloseRequest
+from .schemas.token_v2 import MintInformation as TokenMintInformation
+from .schemas.price_v3 import FieldDatamodelCodeGeneratorRootSpecialGetResponse1 as PriceItem
+from .schemas.lend_earn import EarnAmountRequestBody as EarnAmountRequest, EarnSharesRequestBody as EarnSharesRequest, TransactionResponse, InstructionResponse, TokenInfo, UserPosition, UserEarningsResponse
+from .schemas.send import CraftSendPostRequest as CraftSendRequest, CraftSendPostResponse as CraftSendResponse, CraftClawbackPostRequest as CraftClawbackRequest, CraftClawbackPostResponse as CraftClawbackResponse, InviteDataResponse
+from .schemas.studio import CreateDBCTransactionRequestBody, CreateDBCTransactionResponse, CreateClaimFeeDBCTransactionRequestBody
 from src.helius.services import HeliusService
 
 
@@ -29,7 +37,7 @@ class JupiterService:
         platformFeeBps: Optional[int] = None,
         maxAccounts: Optional[int] = None,
         dynamicSlippage: Optional[bool] = None,
-    ) -> sc.QuoteResponse:
+    ) -> QuoteResponse:
         params: Dict[str, Any] = {
             "inputMint": inputMint,
             "outputMint": outputMint,
@@ -46,7 +54,7 @@ class JupiterService:
             "dynamicSlippage": dynamicSlippage,
         }
         raw = self.client.get("swap", "/quote", params=tf.shape_query(params))
-        return sc.QuoteResponse.model_validate(raw)
+        return QuoteResponse.model_validate(raw)
 
     def _sim_args(self, simulate_opts: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         opts = simulate_opts or {}
@@ -57,39 +65,40 @@ class JupiterService:
 
     def swap_build(
         self,
-        request: sc.SwapRequest,
+        request: SwapRequest,
         simulate: bool = False,
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
         raw = self.client.post("swap", "/swap", request.model_dump())
-        out = {"jupiterResponse": sc.SwapResponse.model_validate(raw).model_dump()}
-        if simulate:
-            tx_b64 = out["jupiterResponse"]["swapTransaction"]
+        resp = SwapResponse.model_validate(raw)
+        out = {"jupiterResponse": resp.model_dump()}
+        if simulate and resp.swapTransaction:
+            tx_b64 = resp.swapTransaction
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(tx_b64, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
         return out
 
-    def swap_instructions(self, request: sc.SwapRequest) -> sc.SwapInstructionsResponse:
+    def swap_instructions(self, request: SwapRequest) -> SwapInstructionsResponse:
         raw = self.client.post("swap", "/swap-instructions", request.model_dump())
-        return sc.SwapInstructionsResponse.model_validate(raw)
+        return SwapInstructionsResponse.model_validate(raw)
 
     def program_id_to_label(self) -> Dict[str, str]:
         return self.client.get("swap", "/program-id-to-label")
 
     # --- Ultra API ---
-    def ultra_holdings(self, address: str) -> sc.HoldingsResponse:
+    def ultra_holdings(self, address: str) -> HoldingsResponse:
         raw = self.client.get("ultra", f"/holdings/{address}")
-        return sc.HoldingsResponse.model_validate(raw)
+        return HoldingsResponse.model_validate(raw)
 
-    def ultra_holdings_native(self, address: str) -> sc.NativeHoldingsResponse:
+    def ultra_holdings_native(self, address: str) -> NativeHoldingsResponse:
         raw = self.client.get("ultra", f"/holdings/{address}/native")
-        return sc.NativeHoldingsResponse.model_validate(raw)
+        return NativeHoldingsResponse.model_validate(raw)
 
-    def ultra_search(self, query: str) -> List[sc.MintInformation]:
+    def ultra_search(self, query: str) -> List[UltraMintInformation]:
         raw = self.client.get("ultra", "/search", params={"query": query})
-        return [sc.MintInformation.model_validate(it) for it in raw]
+        return [UltraMintInformation.model_validate(it) for it in raw]
 
     def ultra_shield(self, mints: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         raw = self.client.get("ultra", "/shield", params={"mints": tf.comma_join(mints)})
@@ -126,7 +135,7 @@ class JupiterService:
             "excludeDexes": excludeDexes,
         }
         raw = self.client.get("ultra", "/order", params=tf.shape_query(params))
-        order = sc.UltraOrderResponse.model_validate(raw)
+        order = UltraOrderResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": order.model_dump()}
         if simulate and order.transaction:
             sargs = self._sim_args(simulate_opts)
@@ -141,15 +150,15 @@ class JupiterService:
     # --- Trigger API ---
     def trigger_create_order(
         self,
-        body: sc.TriggerCreateRequest,
+        body: TriggerCreateRequest,
         simulate: bool = False,
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
         raw = self.client.post("trigger", "/createOrder", body.model_dump())
-        resp = sc.TriggerTransactionResponse.model_validate(raw)
+        resp = TriggerTransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
-        if simulate:
+        if simulate and resp.transaction:
             tx = resp.transaction
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(tx, network=network, **sargs)
@@ -158,15 +167,15 @@ class JupiterService:
 
     def trigger_cancel_order(
         self,
-        body: sc.TriggerCancelRequest,
+        body: TriggerCancelRequest,
         simulate: bool = False,
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
         raw = self.client.post("trigger", "/cancelOrder", body.model_dump())
-        resp = sc.TriggerTransactionResponse.model_validate(raw)
+        resp = TriggerTransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
-        if simulate:
+        if simulate and resp.transactions:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(resp.transaction, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
@@ -174,7 +183,7 @@ class JupiterService:
 
     def trigger_cancel_orders(
         self,
-        body: sc.TriggerCancelManyRequest,
+        body: TriggerCancelManyRequest,
         simulate: bool = False,
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
@@ -182,6 +191,7 @@ class JupiterService:
         raw = self.client.post("trigger", "/cancelOrders", body.model_dump())
         # Response here returns { requestId, transactions: [base64...] }
         out: Dict[str, Any] = {"jupiterResponse": raw}
+        #TODO Model validate the response
         if simulate:
             txs: List[str] = raw.get("transactions") if isinstance(raw, dict) else []
             if isinstance(txs, list):
@@ -198,7 +208,7 @@ class JupiterService:
         includeFailedTx: Optional[str] = None,
         inputMint: Optional[str] = None,
         outputMint: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> GetTriggerOrdersGetResponse:
         params = tf.shape_query(
             {
                 "user": user,
@@ -209,20 +219,21 @@ class JupiterService:
                 "outputMint": outputMint,
             }
         )
-        return self.client.get("trigger", "/getTriggerOrders", params=params)
+        raw = self.client.get("trigger", "/getTriggerOrders", params=params)
+        return GetTriggerOrdersGetResponse.model_validate(raw)        
 
     # --- Recurring API (time) ---
     def recurring_create_order(
         self,
-        body: sc.RecurringCreateRequest,
+        body: RecurringCreateRequest,
         simulate: bool = False,
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
         raw = self.client.post("recurring", "/createOrder", body.model_dump())
-        resp = sc.RecurringResponse.model_validate(raw)
+        resp = RecurringResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
-        if simulate:
+        if simulate and resp.transaction:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(resp.transaction, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
@@ -230,15 +241,15 @@ class JupiterService:
 
     def recurring_cancel_order(
         self,
-        body: sc.RecurringCloseRequest,
+        body: RecurringCloseRequest,
         simulate: bool = False,
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
         raw = self.client.post("recurring", "/cancelOrder", body.model_dump())
-        resp = sc.RecurringResponse.model_validate(raw)
+        resp = RecurringResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
-        if simulate:
+        if simulate and resp.transaction:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(resp.transaction, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
@@ -266,138 +277,140 @@ class JupiterService:
         return self.client.get("recurring", "/getRecurringOrders", params=params)
 
     # --- Token v2 ---
-    def token_search(self, query: str) -> List[sc.MintInformation]:
+    def token_search(self, query: str) -> List[TokenMintInformation]:
         raw = self.client.get("tokens", "/search", params={"query": query})
-        return [sc.MintInformation.model_validate(it) for it in raw]
+        return [TokenMintInformation.model_validate(it) for it in raw]
 
-    def token_tag(self, query: str) -> List[sc.MintInformation]:
+    def token_tag(self, query: str) -> List[TokenMintInformation]:
         raw = self.client.get("tokens", "/tag", params={"query": query})
-        return [sc.MintInformation.model_validate(it) for it in raw]
+        return [TokenMintInformation.model_validate(it) for it in raw]
 
-    def token_category(self, category: str, interval: str, limit: Optional[int] = None) -> List[sc.MintInformation]:
+    def token_category(self, category: str, interval: str, limit: Optional[int] = None) -> List[TokenMintInformation]:
         params = tf.shape_query({"limit": limit})
         raw = self.client.get("tokens", f"/{category}/{interval}", params=params)
-        return [sc.MintInformation.model_validate(it) for it in raw]
+        return [TokenMintInformation.model_validate(it) for it in raw]
 
-    def token_recent(self) -> List[sc.MintInformation]:
+    def token_recent(self) -> List[TokenMintInformation]:
         raw = self.client.get("tokens", "/recent")
-        return [sc.MintInformation.model_validate(it) for it in raw]
+        return [TokenMintInformation.model_validate(it) for it in raw]
 
     # --- Price v3 ---
-    def price_v3(self, ids: List[str]) -> Dict[str, sc.PriceItem]:
+    def price_v3(self, ids: List[str]) -> Dict[str, PriceItem]:
         raw = self.client.get("price", "", params={"ids": tf.comma_join(ids)})
-        return {k: sc.PriceItem.model_validate(v) for k, v in raw.items()}
+        return {k: PriceItem.model_validate(v) for k, v in raw.items()}
 
     # --- Lend/Earn ---
-    def earn_deposit(self, body: sc.EarnAmountRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    def earn_deposit(self, body: EarnAmountRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
         raw = self.client.post("lend", "/earn/deposit", body.model_dump())
-        tx = sc.TransactionResponse.model_validate(raw)
+        tx = TransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": tx.model_dump()}
-        if simulate:
+        if simulate and tx.transaction:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(tx.transaction, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
         return out
 
-    def earn_withdraw(self, body: sc.EarnAmountRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    def earn_withdraw(self, body: EarnAmountRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
         raw = self.client.post("lend", "/earn/withdraw", body.model_dump())
-        tx = sc.TransactionResponse.model_validate(raw)
+        tx = TransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": tx.model_dump()}
-        if simulate:
+        if simulate and tx.transaction:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(tx.transaction, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
         return out
 
-    def earn_mint(self, body: sc.EarnAmountRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    def earn_mint(self, body: EarnSharesRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
         raw = self.client.post("lend", "/earn/mint", body.model_dump())
-        tx = sc.TransactionResponse.model_validate(raw)
+        tx = TransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": tx.model_dump()}
-        if simulate:
+        if simulate and tx.transaction:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(tx.transaction, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
         return out
 
-    def earn_redeem(self, body: sc.EarnAmountRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    def earn_redeem(self, body: EarnSharesRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
         raw = self.client.post("lend", "/earn/redeem", body.model_dump())
-        tx = sc.TransactionResponse.model_validate(raw)
+        tx = TransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": tx.model_dump()}
-        if simulate:
+        if simulate and tx.transaction:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(tx.transaction, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
         return out
 
-    def earn_deposit_instructions(self, body: sc.EarnAmountRequest) -> sc.InstructionResponse:
+    def earn_deposit_instructions(self, body: EarnAmountRequest) -> InstructionResponse:
         raw = self.client.post("lend", "/earn/deposit-instructions", body.model_dump())
-        return sc.InstructionResponse.model_validate(raw)
+        return InstructionResponse.model_validate(raw)
 
-    def earn_withdraw_instructions(self, body: sc.EarnAmountRequest) -> sc.InstructionResponse:
+    def earn_withdraw_instructions(self, body: EarnAmountRequest) -> InstructionResponse:
         raw = self.client.post("lend", "/earn/withdraw-instructions", body.model_dump())
-        return sc.InstructionResponse.model_validate(raw)
+        return InstructionResponse.model_validate(raw)
 
-    def earn_mint_instructions(self, body: sc.EarnSharesRequest) -> sc.InstructionResponse:
+    def earn_mint_instructions(self, body: EarnSharesRequest) -> InstructionResponse:
         raw = self.client.post("lend", "/earn/mint-instructions", body.model_dump())
-        return sc.InstructionResponse.model_validate(raw)
+        return InstructionResponse.model_validate(raw)
 
-    def earn_redeem_instructions(self, body: sc.EarnSharesRequest) -> sc.InstructionResponse:
+    def earn_redeem_instructions(self, body: EarnSharesRequest) -> InstructionResponse:
         raw = self.client.post("lend", "/earn/redeem-instructions", body.model_dump())
-        return sc.InstructionResponse.model_validate(raw)
+        return InstructionResponse.model_validate(raw)
 
-    def earn_tokens(self) -> List[sc.TokenInfo]:
+    def earn_tokens(self) -> List[TokenInfo]:
         raw = self.client.get("lend", "/earn/tokens")
-        return [sc.TokenInfo.model_validate(it) for it in raw]
+        return [TokenInfo.model_validate(it) for it in raw]
 
-    def earn_positions(self, users: List[str]) -> List[sc.UserPosition]:
+    def earn_positions(self, users: List[str]) -> List[UserPosition]:
         raw = self.client.get("lend", "/earn/positions", params={"users": tf.comma_join(users)})
-        return [sc.UserPosition.model_validate(it) for it in raw]
+        return [UserPosition.model_validate(it) for it in raw]
 
-    def earn_earnings(self, user: str, positions: List[str]) -> Dict[str, Any]:
+    def earn_earnings(self, user: str, positions: List[str]) -> UserEarningsResponse:
         raw = self.client.get("lend", "/earn/earnings", params={"user": user, "positions": tf.comma_join(positions)})
-        return raw
+        return UserEarningsResponse.model_validate(raw)
 
     # --- Send API ---
-    def send_craft(self, body: sc.CraftSendRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    def send_craft(self, body: CraftSendRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
         raw = self.client.post("send", "/craft-send", body.model_dump())
-        resp = sc.CraftSendResponse.model_validate(raw)
+        resp = CraftSendResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
-        if simulate:
+        if simulate and resp.tx:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(resp.tx, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
         return out
 
-    def send_craft_clawback(self, body: sc.CraftClawbackRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    def send_craft_clawback(self, body: CraftClawbackRequest, simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
         raw = self.client.post("send", "/craft-clawback", body.model_dump())
-        resp = sc.CraftClawbackResponse.model_validate(raw)
+        resp = CraftClawbackResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
-        if simulate:
+        if simulate and resp.tx:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(resp.tx, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
         return out
 
-    def send_pending_invites(self, address: str, page: Optional[int] = None) -> Dict[str, Any]:
+    def send_pending_invites(self, address: str, page: Optional[int] = None) -> InviteDataResponse:
         params = tf.shape_query({"address": address, "page": page})
-        return self.client.get("send", "/pending-invites", params=params)
+        raw = self.client.get("send", "/pending-invites", params=params)
+        return InviteDataResponse.model_validate(raw)
 
-    def send_invite_history(self, address: str, page: Optional[int] = None) -> Dict[str, Any]:
+    def send_invite_history(self, address: str, page: Optional[int] = None) -> InviteDataResponse:
         params = tf.shape_query({"address": address, "page": page})
-        return self.client.get("send", "/invite-history", params=params)
+        raw = self.client.get("send", "/invite-history", params=params)
+        return InviteDataResponse.model_validate(raw)
 
     # --- Studio (DBC) ---
     def studio_dbc_create_pool_tx(
         self,
-        body: sc.CreateDBCTransactionRequestBody,
+        body: CreateDBCTransactionRequestBody,
         simulate: bool = False,
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
         raw = self.client.post("studio", "/dbc-pool/create-tx", body.model_dump())
-        resp = sc.CreateDBCTransactionResponse.model_validate(raw)
+        resp = CreateDBCTransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
-        if simulate:
+        if simulate and resp.transaction:
             sargs = self._sim_args(simulate_opts)
             sim = self.helius.simulate_transaction(resp.transaction, network=network, **sargs)
             out["simulation"] = sim.model_dump() if hasattr(sim, "model_dump") else sim
@@ -405,7 +418,7 @@ class JupiterService:
 
     def studio_dbc_fee_create_tx(
         self,
-        body: sc.CreateClaimFeeDBCTransactionRequestBody,
+        body: CreateClaimFeeDBCTransactionRequestBody,
         simulate: bool = False,
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",

@@ -11,7 +11,12 @@ from pydantic import BaseModel
 from fastmcp import FastMCP
 
 from src.jupiter.services import JupiterService
-from src.jupiter import schemas as sc
+from src.jupiter.schemas.swap import SwapRequest
+from src.jupiter.schemas.trigger import CreateOrdersRequestBody as TriggerCreateRequest, CancelOrderPostRequest as TriggerCancelRequest, CancelOrdersRequestBody as TriggerCancelManyRequest
+from src.jupiter.schemas.recurring import CreateRecurring as RecurringCreateRequest, CloseRecurring as RecurringCloseRequest
+from src.jupiter.schemas.lend_earn import EarnAmountRequestBody as EarnAmountRequest, EarnSharesRequestBody as EarnSharesRequest
+from src.jupiter.schemas.send import CraftSendPostRequest as CraftSendRequest, CraftClawbackPostRequest as CraftClawbackRequest
+from src.jupiter.schemas.studio import CreateDBCTransactionRequestBody, CreateClaimFeeDBCTransactionRequestBody
 
 
 mcp = FastMCP(
@@ -65,13 +70,13 @@ def swap_quote(
     return q.model_dump()
 
 
-def swap_build(request: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    body = sc.SwapRequest.model_validate(request)
-    return _svc.swap_build(body, simulate=simulate, network=network)
+def swap_build(request: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    body = SwapRequest.model_validate(request)
+    return _svc.swap_build(body, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
 def swap_instructions(request: Dict[str, Any]) -> Dict[str, Any]:
-    body = sc.SwapRequest.model_validate(request)
+    body = SwapRequest.model_validate(request)
     return _dump(_svc.swap_instructions(body))
 
 
@@ -107,6 +112,7 @@ def ultra_order(
     excludeRouters: Optional[str] = None,
     excludeDexes: Optional[str] = None,
     simulate: bool = False,
+    simulate_opts: Optional[Dict[str, Any]] = None,
     network: str = "mainnet",
 ) -> Dict[str, Any]:
     return _svc.ultra_order(
@@ -119,6 +125,7 @@ def ultra_order(
         excludeRouters,
         excludeDexes,
         simulate,
+        simulate_opts,
         network,
     )
 
@@ -129,19 +136,19 @@ def ultra_routers() -> List[Dict[str, Any]]:
 
 # --- trigger ---
 
-def trigger_createOrder(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.TriggerCreateRequest.model_validate(body)
-    return _svc.trigger_create_order(req, simulate=simulate, network=network)
+def trigger_createOrder(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = TriggerCreateRequest.model_validate(body)
+    return _svc.trigger_create_order(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
-def trigger_cancelOrder(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.TriggerCancelRequest.model_validate(body)
-    return _svc.trigger_cancel_order(req, simulate=simulate, network=network)
+def trigger_cancelOrder(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = TriggerCancelRequest.model_validate(body)
+    return _svc.trigger_cancel_order(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
-def trigger_cancelOrders(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.TriggerCancelManyRequest.model_validate(body)
-    return _svc.trigger_cancel_orders(req, simulate=simulate, network=network)
+def trigger_cancelOrders(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = TriggerCancelManyRequest.model_validate(body)
+    return _svc.trigger_cancel_orders(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
 def trigger_getOrders(
@@ -157,14 +164,14 @@ def trigger_getOrders(
 
 # --- recurring ---
 
-def recurring_createOrder(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.RecurringCreateRequest.model_validate(body)
-    return _svc.recurring_create_order(req, simulate=simulate, network=network)
+def recurring_createOrder(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = RecurringCreateRequest.model_validate(body)
+    return _svc.recurring_create_order(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
-def recurring_cancelOrder(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.RecurringCloseRequest.model_validate(body)
-    return _svc.recurring_cancel_order(req, simulate=simulate, network=network)
+def recurring_cancelOrder(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = RecurringCloseRequest.model_validate(body)
+    return _svc.recurring_cancel_order(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
 def recurring_getOrders(
@@ -205,43 +212,43 @@ def price_v3(ids: List[str]) -> Dict[str, Dict[str, Any]]:
 
 # --- earn ---
 
-def earn_deposit(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.EarnAmountRequest.model_validate(body)
-    return _svc.earn_deposit(req, simulate=simulate, network=network)
+def earn_deposit(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = EarnAmountRequest.model_validate(body)
+    return _svc.earn_deposit(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
-def earn_withdraw(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.EarnAmountRequest.model_validate(body)
-    return _svc.earn_withdraw(req, simulate=simulate, network=network)
+def earn_withdraw(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = EarnAmountRequest.model_validate(body)
+    return _svc.earn_withdraw(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
-def earn_mint(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.EarnAmountRequest.model_validate(body)
-    return _svc.earn_mint(req, simulate=simulate, network=network)
+def earn_mint(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = EarnSharesRequest.model_validate(body)
+    return _svc.earn_mint(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
-def earn_redeem(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.EarnAmountRequest.model_validate(body)
-    return _svc.earn_redeem(req, simulate=simulate, network=network)
+def earn_redeem(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = EarnSharesRequest.model_validate(body)
+    return _svc.earn_redeem(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
 def earn_depositInstructions(body: Dict[str, Any]) -> Dict[str, Any]:
-    req = sc.EarnAmountRequest.model_validate(body)
+    req = EarnAmountRequest.model_validate(body)
     return _svc.earn_deposit_instructions(req).model_dump()
 
 
 def earn_withdrawInstructions(body: Dict[str, Any]) -> Dict[str, Any]:
-    req = sc.EarnAmountRequest.model_validate(body)
+    req = EarnAmountRequest.model_validate(body)
     return _svc.earn_withdraw_instructions(req).model_dump()
 
 
 def earn_mintInstructions(body: Dict[str, Any]) -> Dict[str, Any]:
-    req = sc.EarnSharesRequest.model_validate(body)
+    req = EarnSharesRequest.model_validate(body)
     return _svc.earn_mint_instructions(req).model_dump()
 
 
 def earn_redeemInstructions(body: Dict[str, Any]) -> Dict[str, Any]:
-    req = sc.EarnSharesRequest.model_validate(body)
+    req = EarnSharesRequest.model_validate(body)
     return _svc.earn_redeem_instructions(req).model_dump()
 
 
@@ -254,39 +261,39 @@ def earn_positions(users: List[str]) -> List[Dict[str, Any]]:
 
 
 def earn_earnings(user: str, positions: List[str]) -> Dict[str, Any]:
-    return _svc.earn_earnings(user, positions)
+    return _svc.earn_earnings(user, positions).model_dump()
 
 
 # --- send ---
 
-def send_craft(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.CraftSendRequest.model_validate(body)
-    return _svc.send_craft(req, simulate=simulate, network=network)
+def send_craft(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = CraftSendRequest.model_validate(body)
+    return _svc.send_craft(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
-def send_craftClawback(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.CraftClawbackRequest.model_validate(body)
-    return _svc.send_craft_clawback(req, simulate=simulate, network=network)
+def send_craftClawback(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = CraftClawbackRequest.model_validate(body)
+    return _svc.send_craft_clawback(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
 def send_pendingInvites(address: str, page: Optional[int] = None) -> Dict[str, Any]:
-    return _svc.send_pending_invites(address, page)
+    return _svc.send_pending_invites(address, page).model_dump()
 
 
 def send_inviteHistory(address: str, page: Optional[int] = None) -> Dict[str, Any]:
-    return _svc.send_invite_history(address, page)
+    return _svc.send_invite_history(address, page).model_dump()
 
 
 # --- studio ---
 
-def studio_dbc_createPoolTx(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.CreateDBCTransactionRequestBody.model_validate(body)
-    return _svc.studio_dbc_create_pool_tx(req, simulate=simulate, network=network)
+def studio_dbc_createPoolTx(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = CreateDBCTransactionRequestBody.model_validate(body)
+    return _svc.studio_dbc_create_pool_tx(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
-def studio_dbc_feeCreateTx(body: Dict[str, Any], simulate: bool = False, network: str = "mainnet") -> Dict[str, Any]:
-    req = sc.CreateClaimFeeDBCTransactionRequestBody.model_validate(body)
-    return _svc.studio_dbc_fee_create_tx(req, simulate=simulate, network=network)
+def studio_dbc_feeCreateTx(body: Dict[str, Any], simulate: bool = False, simulate_opts: Optional[Dict[str, Any]] = None, network: str = "mainnet") -> Dict[str, Any]:
+    req = CreateClaimFeeDBCTransactionRequestBody.model_validate(body)
+    return _svc.studio_dbc_fee_create_tx(req, simulate=simulate, simulate_opts=simulate_opts, network=network)
 
 
 def studio_dbc_poolAddressesByMint(mint: str) -> Dict[str, Any]:

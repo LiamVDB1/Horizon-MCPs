@@ -64,10 +64,14 @@ class JupiterClient:
     def get(self, family: str, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = f"{self._base(family)}{path}"
         # Inject headers via requests session on-the-fly
-        return self.http.request_with_retry("get", url, params=params, headers=self._headers()).json()
+        resp = self.http.request_with_retry("get", url, params=params, headers=self._headers())
+        resp.raise_for_status()
+        return resp.json()
 
     def post(self, family: str, path: str, body: Dict[str, Any]) -> Any:
         url = f"{self._base(family)}{path}"
-        return self.http.request_with_retry("post", url, json=body, headers=self._headers()).json()
+        resp = self.http.request_with_retry("post", url, json=body, headers=self._headers())
+        resp.raise_for_status()
+        return resp.json()
 
 
