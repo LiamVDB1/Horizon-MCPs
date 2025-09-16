@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+import asyncio
 
 from .client import HeliusClient
 from .schemas import (
@@ -335,10 +336,9 @@ class HeliusService:
         network: str = "mainnet",
         min_amount_ui: float = 1000.0,
         min_sol_balance: float = 0.1,
-        max_results: int = 10,
-    ) -> List[str]:
+    ) -> Optional[(str, Optional[float])]:
         """
-        Get addresses of token "whales" (large holders) for simulation purposes.
+        Get a single address of a token "whale" (large holder) for simulation purposes.
         
         This method is designed for Jupiter API use cases where you need a "taker" 
         with guaranteed sufficient funds to simulate transactions.
@@ -351,43 +351,49 @@ class HeliusService:
             network: Network ("mainnet" or "devnet")
             min_amount_ui: Minimum token amount (adjusted for decimals)
             min_sol_balance: Minimum SOL balance for transaction fees (in SOL)
-            max_results: Maximum number of whale addresses to return
             
         Returns:
-            List of addresses that meet the whale criteria
+            A single address that meets the whale criteria, or None if not found
         """
+        SOL = "So11111111111111111111111111111111111111112"
+        known_failures = [
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", # USDC
+            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" # USDT
+        ]
+
+        if mint == SOL:
+            whale_acc = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM" # Binance Hot Wallet
+            whale_bal = self.get_balance(whale_acc, network) - 100 # 100 Sol as buffer (fee etc)
+            return whale_acc if min_amount_ui <= whale_bal else (whale_acc, whale_bal)
+
+
+        if mint in known_failures:
+            return self._get_whales_via_das_pagination(mint, network, min_amount_ui, min_sol_balance)
+        
         # First try the standard RPC method
-        try:
+        try:                        
             largest = self.get_token_largest_accounts(mint, network)
             if largest and len(largest) > 0:
-                # Extract addresses from successful response
-                whale_addresses = []
                 for account in largest:
                     if account.address and account.ui_amount_string:
                         try:
                             amount = float(account.ui_amount_string)
                             if amount >= min_amount_ui:
-                                # Check SOL balance for fees
                                 sol_balance = self.get_balance(account.address, network)
-                                sol_amount = sol_balance / 1_000_000_000  # Convert lamports to SOL
+                                sol_amount = sol_balance / 1_000_000_000
                                 if sol_amount >= min_sol_balance:
-                                    whale_addresses.append(account.address)
-                                    if len(whale_addresses) >= max_results:
-                                        break
+                                    return account.address
                         except (ValueError, TypeError):
                             continue
-                
-                if whale_addresses:
-                    return whale_addresses
                     
         except RuntimeError as e:
-            if "Too many accounts" not in str(e):
+            if "Too many accounts" not in str(e) and "Request deprioritized" not in str(e):
                 raise  # Re-raise unexpected errors
             # Fall through to DAS method for large tokens
         
         # Fallback: Use DAS getTokenAccounts with pagination
         return self._get_whales_via_das_pagination(
-            mint, network, min_amount_ui, min_sol_balance, max_results
+            mint, network, min_amount_ui, min_sol_balance
         )
     
     def _get_whales_via_das_pagination(
@@ -396,22 +402,23 @@ class HeliusService:
         network: str,
         min_amount_ui: float,
         min_sol_balance: float,
-        max_results: int,
-    ) -> List[str]:
+    ) -> Optional[(str, Optional[float])]:
         """
-        Find whale addresses using DAS getTokenAccounts with pagination.
-        Used as fallback for large tokens where getTokenLargestAccounts fails.
+        Find a whale address using DAS getTokenAccounts with pagination.
+        Returns early once a suitable address is found.
         """
-        whale_addresses: List[str] = []
         limit = 1000  # DAS max per page
         cursor: Optional[str] = None
         iterations = 0
-        max_iterations = 20  # Safety bound
+        max_iterations = 2  # Only check first 2 pages for performance (min_amount_ui would just be unreasonable)
 
-        # Default decimals for common fungible tokens; refined per-account when possible
-        default_decimals = 6
+        # Default decimals for common fungible tokens
+        decimals = self.get_asset(mint, network).decimals or 6
 
-        while len(whale_addresses) < max_results and iterations < max_iterations:
+        largest_candidate = None
+        largest_amount = 0.0
+
+        while iterations < max_iterations:
             iterations += 1
             try:
                 params: Dict[str, Any] = {"mint": mint, "limit": limit}
@@ -427,64 +434,80 @@ class HeliusService:
                     raw = None
 
                 if raw is not None:
-                    items = raw.items or []
+                    token_accounts = raw.token_accounts or []
                 else:
                     if not isinstance(das_result, dict):
                         break
-                    items = das_result.get("items") or []
-                    if not isinstance(items, list) or not items:
+                    token_accounts = das_result.get("token_accounts") or []
+                    if not isinstance(token_accounts, list) or not token_accounts:
                         break
 
-                for it in items:
-                    if len(whale_addresses) >= max_results:
-                        break
+                # Build candidate owners from this page and track largest
+                candidate_owners: List[str] = []
+                for it in token_accounts:                    
                     try:
                         # Support both validated model and dict
                         if hasattr(it, "owner"):
                             owner = it.owner
                             amount_raw = it.amount
-                            bal = getattr(it, "balance", None)
                         else:
                             owner = it.get("owner") if isinstance(it, dict) else None
                             amount_raw = it.get("amount") if isinstance(it, dict) else None
-                            bal = it.get("balance") if isinstance(it, dict) else None
 
-                        if not owner:
+                        if not owner or amount_raw is None:
                             continue
 
-                        # Prefer balance.decimals/uiAmountString if present
-                        amount_ui: Optional[float] = None
-                        decimals_for_item: Optional[int] = None
-
-                        balance_obj = bal if isinstance(bal, (dict,)) or bal is not None else None
-                        if isinstance(balance_obj, dict) or hasattr(balance_obj, "uiAmountString"):
-                            ui_amt_str = balance_obj.get("uiAmountString") if isinstance(balance_obj, dict) else balance_obj.uiAmountString
-                            if isinstance(ui_amt_str, str):
-                                try:
-                                    amount_ui = float(ui_amt_str)
-                                except Exception:
-                                    amount_ui = None
-                            dec = balance_obj.get("decimals") if isinstance(balance_obj, dict) else balance_obj.decimals
-                            if isinstance(dec, int):
-                                decimals_for_item = dec
-
-                        if amount_ui is None and isinstance(amount_raw, int):
-                            dec = decimals_for_item if isinstance(decimals_for_item, int) else default_decimals
-                            amount_ui = float(amount_raw) / (10 ** dec)
-
-                        if amount_ui is None:
-                            continue
+                        amount_ui = float(amount_raw) / (10 ** decimals)
+                        
+                        # Track the largest candidate regardless of threshold
+                        if amount_ui > largest_amount:
+                            largest_amount = amount_ui
+                            largest_candidate = owner
 
                         if amount_ui >= min_amount_ui:
-                            # Ensure owner has sufficient SOL for fees
-                            try:
-                                sol_lamports = self.get_balance(owner, network)
-                                if (sol_lamports or 0) >= int(min_sol_balance * 1_000_000_000):
-                                    whale_addresses.append(owner)
-                            except Exception:
-                                continue
+                            print(f"{amount_raw} - {owner} - {amount_ui}")
+                            candidate_owners.append(owner)
                     except Exception:
                         continue
+
+                # Concurrently check balances with a semaphore and exit on first hit
+                if candidate_owners:
+                    threshold_lamports = int(min_sol_balance * 1_000_000_000)
+                    semaphore = 5
+
+                    print(f"found {len(candidate_owners) } candidate_owners")
+                    print(f"candidate owners: {candidate_owners}")
+
+                    async def _first_owner(owners: List[str]) -> Optional[str]:
+                        sem = asyncio.Semaphore(semaphore)
+
+                        async def _check(owner: str) -> Optional[str]:
+                            async with sem:
+                                try:
+                                    lamports = await asyncio.to_thread(self.get_balance, owner, network)
+                                except Exception:
+                                    return None
+                                return owner if (lamports or 0) >= threshold_lamports else None
+
+                        tasks = [asyncio.create_task(_check(o)) for o in owners]
+                        for coro in asyncio.as_completed(tasks):
+                            try:
+                                res = await coro
+                            except Exception:
+                                continue
+                            if res:
+                                # Cancel all other tasks
+                                for t in tasks:
+                                    if not t.done():
+                                        t.cancel()
+
+                                # Return the first result
+                                return res
+                        return None
+
+                    found = asyncio.run(_first_owner(candidate_owners))
+                    if found:
+                        return found
 
                 # Advance cursor; if no cursor returned, stop
                 cursor = (raw.cursor if raw is not None else das_result.get("cursor")) if isinstance(das_result, dict) or raw is not None else None
@@ -493,59 +516,18 @@ class HeliusService:
             except Exception:
                 break
 
-        if whale_addresses:
-            return whale_addresses
-
-        # As a last resort, use known whales but enforce SOL balance and limit
-        known_candidates = self._get_known_whale_addresses(mint, network)
-        filtered: List[str] = []
-        for addr in known_candidates:
-            if len(filtered) >= max_results:
-                break
+        # If no qualifying candidate found, return the largest one we found
+        if largest_candidate:
+            print(f"Found no valid ui_amount, falling back to largest: {largest_amount}")
             try:
-                sol_lamports = self.get_balance(addr, network)
-                if (sol_lamports or 0) >= int(min_sol_balance * 1_000_000_000):
-                    filtered.append(addr)
+                sol_lamports = self.get_balance(largest_candidate, network)
+                sol_amount = (sol_lamports or 0) / 1_000_000_000
+                if sol_amount >= min_sol_balance:
+                    return largest_candidate, largest_amount
             except Exception:
-                continue
-        return filtered or known_candidates[:max_results]
+                pass
+
+        return None
     
-    def _get_known_whale_addresses(self, mint: str, network: str) -> List[str]:
-        """
-        Return known whale addresses for major tokens.
-        This is a fallback when APIs fail due to scale.
-        """
-        if network != "mainnet":
-            return []
-        
-        # Known whale addresses for major tokens on mainnet
-        known_whales = {
-            # USDC whales (exchanges, market makers, etc)
-            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": [
-                "BQy5rNRxLfcaK6554PMzsg4VJsFXzwGnAnayb8TZKgZX",  # Circle
-                "CqCDNi1PSB7cP3rDxU12YKjVDqbJeZ9rGhxZxkkwi6mC",  # Major exchange
-                "9RfZwn2Prux6QesG1Noo4HzMEBkMvoYdkLRMKEZf86tT",  # Binance
-                "H8W3ctz92svYXCbxDdZGTCm66RBkXqudLV8Xjhj8HBJd",  # FTX
-                "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",  # Alameda
-            ],
-            # SOL whales  
-            "So11111111111111111111111111111111111111112": [
-                "GjphYQcbP1m3FuDyCTUJf2mUMxKME2QyELubyyi8gH4E",  # Exchange
-                "J1S9H3QjnRtBbbuD4HjPV6RpRhwuk4zKbxsnCHuTgh9w",  # Validator
-                "Bd7VSwkqpwHjKPMRLQUPqTk5W7c1VRNDfSQ1YTVMQ52v",  # Foundation
-                "AhbYQB2Kw4tG3e8YmK8j5zJ4r3F8VXf6wUgkEoWsGkAJ",  # Market maker
-                "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",  # Large holder
-            ],
-            # USDT whales
-            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": [
-                "Q6LZqDG2J4E7KZAkfN5X9w3J8c7VGp9LhJy8aK5mYfDq",  # Exchange
-                "HAkqJgFCPRhtfvXBMVQ9BfrYPKQhcMp3FGVj9bwyNNMp",  # Tether treasury  
-                "J1S9H3QjnRtBbbuD4HjPV6RpRhwuk4zKbxsnCHuTgh9w",  # Market maker
-                "Bd7VSwkqpwHjKPMRLQUPqTk5W7c1VRNDfSQ1YTVMQ52v",  # Exchange 2
-                "AhbYQB2Kw4tG3e8YmK8j5zJ4r3F8VXf6wUgkEoWsGkAJ",  # Large holder
-            ]
-        }
-        
-        return known_whales.get(mint, [])
 
 

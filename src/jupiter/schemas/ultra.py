@@ -153,6 +153,7 @@ class RoutePlanItem(BaseModel):
 
 class Router(Enum):
     aggregator = 'aggregator'
+    metis = 'metis'
     jupiterz = 'jupiterz'
     dflow = 'dflow'
     okx = 'okx'

@@ -70,7 +70,8 @@ class JupiterService:
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
-        raw = self.client.post("swap", "/swap", request.model_dump())
+        # Ensure enums and nested models are JSON-serializable
+        raw = self.client.post("swap", "/swap", request.model_dump(mode="json"))
         resp = SwapResponse.model_validate(raw)
         out = {"jupiterResponse": resp.model_dump()}
         if simulate and resp.swapTransaction:
@@ -81,7 +82,7 @@ class JupiterService:
         return out
 
     def swap_instructions(self, request: SwapRequest) -> SwapInstructionsResponse:
-        raw = self.client.post("swap", "/swap-instructions", request.model_dump())
+        raw = self.client.post("swap", "/swap-instructions", request.model_dump(mode="json"))
         return SwapInstructionsResponse.model_validate(raw)
 
     def program_id_to_label(self) -> Dict[str, str]:
@@ -118,10 +119,9 @@ class JupiterService:
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
-        if not taker:
+        if not taker and simulate:
             try:
-                whales = self.helius.get_token_whale_addresses(inputMint, network=network)
-                taker = tf.choose_taker_from_whales(whales) or taker
+                taker = self.helius.get_token_whale_addresses(inputMint, network=network, min_amount_ui=float(amount))
             except Exception:
                 pass
         params: Dict[str, Any] = {
@@ -135,7 +135,12 @@ class JupiterService:
             "excludeDexes": excludeDexes,
         }
         raw = self.client.get("ultra", "/order", params=tf.shape_query(params))
-        order = UltraOrderResponse.model_validate(raw)
+        try:
+            order = UltraOrderResponse.model_validate(raw)
+        except Exception as e:
+            print(raw)
+            print(e)
+            raise e
         out: Dict[str, Any] = {"jupiterResponse": order.model_dump()}
         if simulate and order.transaction:
             sargs = self._sim_args(simulate_opts)
@@ -155,7 +160,7 @@ class JupiterService:
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
-        raw = self.client.post("trigger", "/createOrder", body.model_dump())
+        raw = self.client.post("trigger", "/createOrder", body.model_dump(mode="json"))
         resp = TriggerTransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
         if simulate and resp.transaction:
@@ -172,7 +177,7 @@ class JupiterService:
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
-        raw = self.client.post("trigger", "/cancelOrder", body.model_dump())
+        raw = self.client.post("trigger", "/cancelOrder", body.model_dump(mode="json"))
         resp = TriggerTransactionResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
         if simulate and resp.transactions:
@@ -246,7 +251,7 @@ class JupiterService:
         simulate_opts: Optional[Dict[str, Any]] = None,
         network: str = "mainnet",
     ) -> Dict[str, Any]:
-        raw = self.client.post("recurring", "/cancelOrder", body.model_dump())
+        raw = self.client.post("recurring", "/cancelOrder", body.model_dump(mode="json"))
         resp = RecurringResponse.model_validate(raw)
         out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
         if simulate and resp.transaction:
@@ -264,12 +269,13 @@ class JupiterService:
         page: Optional[int] = None,
         mint: Optional[str] = None,
     ) -> Dict[str, Any]:
+        # API expects 'true'/'false' strings for includeFailedTx
         params = tf.shape_query(
             {
                 "recurringType": recurringType,
                 "orderStatus": orderStatus,
                 "user": user,
-                "includeFailedTx": includeFailedTx,
+                "includeFailedTx": str(includeFailedTx).lower(),
                 "page": page,
                 "mint": mint,
             }
@@ -342,27 +348,88 @@ class JupiterService:
 
     def earn_deposit_instructions(self, body: EarnAmountRequest) -> InstructionResponse:
         raw = self.client.post("lend", "/earn/deposit-instructions", body.model_dump())
+        # Some responses wrap instructions under { instructions: [..] }
+        if isinstance(raw, dict) and "instructions" in raw and isinstance(raw["instructions"], list):
+            first = raw["instructions"][0] if raw["instructions"] else {}
+            return InstructionResponse.model_validate(first)
         return InstructionResponse.model_validate(raw)
 
     def earn_withdraw_instructions(self, body: EarnAmountRequest) -> InstructionResponse:
         raw = self.client.post("lend", "/earn/withdraw-instructions", body.model_dump())
+        if isinstance(raw, dict) and "instructions" in raw and isinstance(raw["instructions"], list):
+            first = raw["instructions"][0] if raw["instructions"] else {}
+            return InstructionResponse.model_validate(first)
         return InstructionResponse.model_validate(raw)
 
     def earn_mint_instructions(self, body: EarnSharesRequest) -> InstructionResponse:
         raw = self.client.post("lend", "/earn/mint-instructions", body.model_dump())
+        if isinstance(raw, dict) and "instructions" in raw and isinstance(raw["instructions"], list):
+            first = raw["instructions"][0] if raw["instructions"] else {}
+            return InstructionResponse.model_validate(first)
         return InstructionResponse.model_validate(raw)
 
     def earn_redeem_instructions(self, body: EarnSharesRequest) -> InstructionResponse:
         raw = self.client.post("lend", "/earn/redeem-instructions", body.model_dump())
+        if isinstance(raw, dict) and "instructions" in raw and isinstance(raw["instructions"], list):
+            first = raw["instructions"][0] if raw["instructions"] else {}
+            return InstructionResponse.model_validate(first)
         return InstructionResponse.model_validate(raw)
 
     def earn_tokens(self) -> List[TokenInfo]:
         raw = self.client.get("lend", "/earn/tokens")
-        return [TokenInfo.model_validate(it) for it in raw]
+        fixed: List[Dict[str, Any]] = []
+        for it in raw if isinstance(raw, list) else []:
+            item = dict(it)
+            # Normalize nested asset keys (camelCase -> snake_case) and required fields
+            asset = item.get("asset")
+            if isinstance(asset, dict):
+                a = dict(asset)
+                if "chainId" in a and "chain_id" not in a:
+                    a["chain_id"] = a.pop("chainId")
+                if "logoUrl" in a and "logo_url" not in a:
+                    a["logo_url"] = a.pop("logoUrl")
+                if "coingeckoId" in a and "coingecko_id" not in a:
+                    a["coingecko_id"] = a.pop("coingeckoId")
+                item["asset"] = a
+            # Normalize liquiditySupplyData numbers -> strings per schema
+            lsd = item.get("liquiditySupplyData")
+            if isinstance(lsd, dict):
+                l = dict(lsd)
+                for k, v in list(l.items()):
+                    if isinstance(v, (int, float)):
+                        l[k] = str(v)
+                item["liquiditySupplyData"] = l
+            fixed.append(item)
+        return [TokenInfo.model_validate(it) for it in fixed]
 
     def earn_positions(self, users: List[str]) -> List[UserPosition]:
         raw = self.client.get("lend", "/earn/positions", params={"users": tf.comma_join(users)})
-        return [UserPosition.model_validate(it) for it in raw]
+        fixed: List[Dict[str, Any]] = []
+        for it in raw if isinstance(raw, list) else []:
+            item = dict(it)
+            token = item.get("token")
+            if isinstance(token, dict):
+                tok = dict(token)
+                asset = tok.get("asset")
+                if isinstance(asset, dict):
+                    a = dict(asset)
+                    if "chainId" in a and "chain_id" not in a:
+                        a["chain_id"] = a.pop("chainId")
+                    if "logoUrl" in a and "logo_url" not in a:
+                        a["logo_url"] = a.pop("logoUrl")
+                    if "coingeckoId" in a and "coingecko_id" not in a:
+                        a["coingecko_id"] = a.pop("coingeckoId")
+                    tok["asset"] = a
+                lsd = tok.get("liquiditySupplyData")
+                if isinstance(lsd, dict):
+                    l = dict(lsd)
+                    for k, v in list(l.items()):
+                        if isinstance(v, (int, float)):
+                            l[k] = str(v)
+                    tok["liquiditySupplyData"] = l
+                item["token"] = tok
+            fixed.append(item)
+        return [UserPosition.model_validate(it) for it in fixed]
 
     def earn_earnings(self, user: str, positions: List[str]) -> UserEarningsResponse:
         raw = self.client.get("lend", "/earn/earnings", params={"user": user, "positions": tf.comma_join(positions)})
