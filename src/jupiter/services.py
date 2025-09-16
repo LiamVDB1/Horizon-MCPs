@@ -122,6 +122,9 @@ class JupiterService:
         if not taker and simulate:
             try:
                 taker = self.helius.get_token_whale_addresses(inputMint, network=network, min_amount_ui=float(amount))
+                if isinstance(taker, tuple):
+                    taker, amount = taker
+
             except Exception:
                 pass
         params: Dict[str, Any] = {

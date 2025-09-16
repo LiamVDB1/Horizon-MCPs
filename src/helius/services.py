@@ -336,7 +336,7 @@ class HeliusService:
         network: str = "mainnet",
         min_amount_ui: float = 1000.0,
         min_sol_balance: float = 0.1,
-    ) -> Optional[(str, Optional[float])]:
+    ) -> Optional[(str, Optional[str])]:
         """
         Get a single address of a token "whale" (large holder) for simulation purposes.
         
@@ -363,8 +363,8 @@ class HeliusService:
 
         if mint == SOL:
             whale_acc = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM" # Binance Hot Wallet
-            whale_bal = self.get_balance(whale_acc, network) - 100 # 100 Sol as buffer (fee etc)
-            return whale_acc if min_amount_ui <= whale_bal else (whale_acc, whale_bal)
+            whale_bal = self.get_balance(whale_acc, network) - (100 * 10 ** 9) # 100 Sol as buffer for fees, etc. 10^9, to account for the decimals.
+            return whale_acc if min_amount_ui <= whale_bal else (whale_acc, str(whale_bal))
 
 
         if mint in known_failures:
@@ -402,7 +402,7 @@ class HeliusService:
         network: str,
         min_amount_ui: float,
         min_sol_balance: float,
-    ) -> Optional[(str, Optional[float])]:
+    ) -> Optional[(str, Optional[str])]:
         """
         Find a whale address using DAS getTokenAccounts with pagination.
         Returns early once a suitable address is found.
@@ -460,12 +460,11 @@ class HeliusService:
                         amount_ui = float(amount_raw) / (10 ** decimals)
                         
                         # Track the largest candidate regardless of threshold
-                        if amount_ui > largest_amount:
-                            largest_amount = amount_ui
+                        if amount_raw > largest_amount:
+                            largest_amount = amount_raw
                             largest_candidate = owner
 
                         if amount_ui >= min_amount_ui:
-                            print(f"{amount_raw} - {owner} - {amount_ui}")
                             candidate_owners.append(owner)
                     except Exception:
                         continue
@@ -473,10 +472,7 @@ class HeliusService:
                 # Concurrently check balances with a semaphore and exit on first hit
                 if candidate_owners:
                     threshold_lamports = int(min_sol_balance * 1_000_000_000)
-                    semaphore = 5
-
-                    print(f"found {len(candidate_owners) } candidate_owners")
-                    print(f"candidate owners: {candidate_owners}")
+                    semaphore = 3
 
                     async def _first_owner(owners: List[str]) -> Optional[str]:
                         sem = asyncio.Semaphore(semaphore)

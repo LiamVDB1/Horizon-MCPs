@@ -180,16 +180,18 @@ def test_ultra_order_quote() -> None:
     result = svc.ultra_order(
         inputMint=USDC_MINT,
         outputMint=SOL_MINT,
-        amount="100000",# + "0000000000",
+        amount="100000",
         simulate=True,
     )
     assert isinstance(result, dict)
     jr = result.get("jupiterResponse")
-    print(result)
+    sim = result.get("simulation")
     assert isinstance(jr, dict)
-    #assert jr.get("inputMint") == SOL_MINT
-    #assert jr.get("outputMint") == USDC_MINT
-    assert "requestId" in jr
+    assert isinstance(sim, dict)
+    assert jr.get("inputMint") == USDC_MINT
+    assert jr.get("outputMint") == SOL_MINT
+
+    assert "requestId" in jr    
 
 
 @requires_live
