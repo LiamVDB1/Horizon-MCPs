@@ -297,7 +297,14 @@ def summarize_asset(asset: Dict[str, Any]) -> AssetSummary:
         if (g.group_key == "collection" or g.group_key == "collectionId") and g.group_value:
             collection = g.group_value
             break    
-        
+    # Token Info
+    decimals = None
+    token_program = None
+    price = None
+    if parsed.token_info:
+        decimals = parsed.token_info.decimals
+        token_program = parsed.token_info.token_program
+        price = parsed.token_info.price_info.price_per_token if parsed.token_info.price_info else None
 
     return AssetSummary(
         id=parsed.id,
@@ -308,6 +315,9 @@ def summarize_asset(asset: Dict[str, Any]) -> AssetSummary:
         collection=collection,
         compressed=bool(parsed.compression.compressed) if parsed.compression else False,
         interface=parsed.interface,
+        decimals=decimals,
+        token_program=token_program,
+        token_price_usd=price
     )
 
 
@@ -341,18 +351,16 @@ def summarize_assets_page(result: Dict[str, Any]) -> AssetsPageSummary:
 def summarize_token_accounts(result: Dict[str, Any]) -> TokenAccountsResult:
     parsed = RawDasTokenAccountsResult.model_validate(result)
     out_items: List[TokenAccountSummary] = []
-    for it in parsed.items or []:
-        token_account = it.token_account or it.address or it.id
-        owner = it.owner or it.ownerAddress
+    for it in parsed.token_accounts or []:
+        token_account = it.address
+        owner = it.owner
         mint = it.mint
         amount: Optional[str] = None
         decimals: Optional[int] = None
         ui_amount_str: Optional[str] = None
-        if it.balance:
-            amount = str(it.balance.amount) if it.balance.amount is not None else None
-            decimals = it.balance.decimals
-            ui_amount_str = it.balance.uiAmountString
-        elif it.amount is not None:
+        
+        # Use amount directly since balance field is not available
+        if it.amount is not None:
             amount = str(it.amount)
         out_items.append(
             TokenAccountSummary(
@@ -364,7 +372,7 @@ def summarize_token_accounts(result: Dict[str, Any]) -> TokenAccountsResult:
                 ui_amount_string=ui_amount_str,
             )
         )
-    return TokenAccountsResult(total=parsed.total, items=out_items)
+    return TokenAccountsResult(total=parsed.total, token_accounts=out_items)
 
 
 def summarize_account_info(value: Dict[str, Any]) -> AccountInfoSummary:

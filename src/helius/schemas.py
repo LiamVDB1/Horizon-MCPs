@@ -87,7 +87,10 @@ class AssetSummary(_BaseModel):
     collection: Optional[str] = None
     compressed: Optional[bool] = None
     interface: Optional[str] = None
+    decimals: Optional[int] = None
+    token_program: Optional[str] = None
     token_price_usd: Optional[float] = None
+
 
 
 class AssetsPageSummary(_BaseModel):
@@ -113,7 +116,7 @@ class TokenLargestAccountItem(_BaseModel):
 
 class TokenAccountsResult(_BaseModel):
     total: Optional[int] = None
-    items: List[TokenAccountSummary] = Field(default_factory=list)
+    token_accounts: List[TokenAccountSummary] = Field(default_factory=list)
 
 
 class AccountInfoSummary(_BaseModel):
@@ -342,18 +345,16 @@ class RawDasCompression(_BaseModel):
 
 
 class RawTokenPriceInfo(_BaseModel):
-    price: Optional[float] = None
-    current: Optional[float] = None
     price_per_token: Optional[float] = None
-    usd: Optional[float] = None
+    currency: Optional[str] = None
 
 
 class RawDasTokenInfo(_BaseModel):
+    symbol: Optional[str] = None
     supply: Optional[int] = None
     decimals: Optional[int] = None
     token_program: Optional[str] = None
-    mint_authority: Optional[str] = None
-    freeze_authority: Optional[str] = None
+    price_info: Optional[RawTokenPriceInfo] = None
 
 
 class RawDasAuthorities(_BaseModel):
@@ -413,8 +414,8 @@ class RawDasTokenAccountItem(_BaseModel):
     amount: Optional[int] = None
     delegated_amount: Optional[int] = None
     frozen: Optional[bool] = None
-    burnt: Optional[Any] = None
-    balance: Optional[RawDasTokenBalance] = None
+    #burnt: Optional[Any] = None
+    #balance: Optional[RawDasTokenBalance] = None
 
 
 class RawDasTokenBalance(_BaseModel):
@@ -428,7 +429,7 @@ class RawDasTokenAccountsResult(_BaseModel):
     total: Optional[int] = None
     limit: Optional[int] = None
     cursor: Optional[str] = None
-    items: List[Union[RawDasTokenAccountItem, Dict[str, Any]]] = Field(default_factory=list)
+    token_accounts: List[Union[RawDasTokenAccountItem, Dict[str, Any]]] = Field(default_factory=list)
 
 
 # --- Helpers RAW -----------------------------------------------------------

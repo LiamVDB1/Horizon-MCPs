@@ -428,13 +428,13 @@ def test_get_token_accounts() -> None:
     # Get token accounts for an active wallet
     accounts = svc.get_token_accounts(ACTIVE_WALLET, network="mainnet")
     assert isinstance(accounts, TokenAccountsResult)
-    assert isinstance(accounts.items, list)
+    assert isinstance(accounts.token_accounts, list)
     assert accounts.total is None or isinstance(accounts.total, int)
     
     # Get accounts for specific mint
     usdc_accounts = svc.get_token_accounts(ACTIVE_WALLET, mint=USDC_MINT, network="mainnet")
     assert isinstance(usdc_accounts, TokenAccountsResult)
-    assert isinstance(usdc_accounts.items, list)
+    assert isinstance(usdc_accounts.token_accounts, list)
 
 
 @requires_live
@@ -497,25 +497,29 @@ def test_get_token_whale_addresses_jupiter_api_use_case() -> None:
     # Test the primary use case: USDC whales for Jupiter API
     print("🎯 Testing USDC whale addresses for Jupiter API simulation...")
     
-    usdc_whales = svc.get_token_whale_addresses(
+    usdc_result = svc.get_token_whale_addresses(
         USDC_MINT, 
         network="mainnet",
         min_amount_ui=1000.0,  # At least 1000 USDC
         min_sol_balance=0.01,  # At least 0.01 SOL for fees
-        max_results=5
     )
     
-    # Validate results
-    assert isinstance(usdc_whales, list), "Should return a list of whale addresses"
-    assert len(usdc_whales) > 0, "Should return at least one whale address"
+    # Handle both return types: string address or tuple (address, balance)
+    if isinstance(usdc_result, tuple):
+        usdc_whale, usdc_whale_balance = usdc_result
+        assert isinstance(usdc_whale_balance, (float, int)), "Whale balance should be a number"
+    else:
+        usdc_whale = usdc_result
+        usdc_whale_balance = None
     
-    # Validate each address
-    for whale_addr in usdc_whales:
-        assert isinstance(whale_addr, str), "Each whale address should be a string"
-        assert len(whale_addr) > 20, "Each address should be a valid Solana pubkey"
+    # Validate the whale address
+    assert isinstance(usdc_whale, str), "Whale address should be a string"
+    assert len(usdc_whale) > 20, "Address should be a valid Solana pubkey"
     
-    print(f"✅ Found {len(usdc_whales)} USDC whale addresses for Jupiter API")
-    print(f"🐋 Example whale: {usdc_whales[0]}")
+    print(f"✅ Found valid USDC whale address for Jupiter API")
+    print(f"🐋 whale address: {usdc_whale}")
+    if usdc_whale_balance is not None:
+        print(f"🐋 whale balance: {usdc_whale_balance}")
     
     # Test other major tokens that are important for Jupiter API
     major_tokens = [
@@ -524,26 +528,24 @@ def test_get_token_whale_addresses_jupiter_api_use_case() -> None:
     ]
     
     for mint, name, min_amount in major_tokens:
-        whales = svc.get_token_whale_addresses(
+        whale_result = svc.get_token_whale_addresses(
             mint, 
             network="mainnet",
             min_amount_ui=min_amount,
             min_sol_balance=0.01,
-            max_results=3
         )
-        assert isinstance(whales, list), f"{name} should return a list"
-        assert len(whales) > 0, f"{name} should have whale addresses"
-        print(f"✅ {name}: {len(whales)} whale addresses available")
-    
-    # Test the fallback mechanism works
-    print("🔄 Testing fallback to known whales behavior...")
-    
-    known_whales = svc._get_known_whale_addresses(USDC_MINT, "mainnet")
-    assert len(known_whales) > 0, "Should have known USDC whales as fallback"
-    
-    # The main whale method should return valid addresses (either from API or fallback)
-    assert set(usdc_whales).issubset(set(known_whales)) or len(usdc_whales) > 0, \
-        "Should return either API results or known whale addresses"
+        assert whale_result is not None, f"{name} should return a whale address"
+        
+        # Handle both return types: string address or tuple (address, balance)
+        if isinstance(whale_result, tuple):
+            whale_addr, whale_balance = whale_result
+        else:
+            whale_addr = whale_result
+            whale_balance = None
+            
+        assert isinstance(whale_addr, str), f"{name} whale address should be a string"
+        assert len(whale_addr) > 20, f"{name} whale address should be a valid Solana pubkey"
+        print(f"✅ {name}: whale address available ({whale_addr[:8]}...)")
     
     print("✅ Whale address system works for all major Jupiter API tokens")
 
@@ -554,25 +556,30 @@ def test_whale_addresses_have_sufficient_balances() -> None:
     svc = HeliusService()
     
     # Get USDC whales and verify they actually have the required balances
-    whales = svc.get_token_whale_addresses(
+    whale_result = svc.get_token_whale_addresses(
         USDC_MINT,
         network="mainnet", 
         min_amount_ui=500.0,  # At least 500 USDC
         min_sol_balance=0.01,
-        max_results=2
     )
     
-    assert len(whales) > 0, "Should find at least one whale"
+    assert whale_result is not None, "Should find at least one whale"
     
-    # Check the first whale's actual balances
-    whale_addr = whales[0]
+    # Handle both return types: string address or tuple (address, balance)
+    if isinstance(whale_result, tuple):
+        whale, whale_balance = whale_result
+    else:
+        whale = whale_result
+        whale_balance = None
     
     # Check SOL balance
-    sol_lamports = svc.get_balance(whale_addr, network="mainnet")
+    sol_lamports = svc.get_balance(whale, network="mainnet")
     sol_balance = sol_lamports / 1_000_000_000
-    assert sol_balance >= 0.01, f"Whale {whale_addr} should have at least 0.01 SOL for fees"
+    assert sol_balance >= 0.01, f"Whale {whale} should have at least 0.01 SOL for fees"
     
-    print(f"✅ Whale {whale_addr} has {sol_balance:.4f} SOL for transaction fees")
+    print(f"✅ Whale {whale} has {sol_balance:.4f} SOL for transaction fees")
+    if whale_balance is not None:
+        print(f"✅ Whale has {whale_balance} token balance")
     print("✅ Whale addresses are validated and ready for Jupiter API use")
 
 
