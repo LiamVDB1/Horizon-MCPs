@@ -6,7 +6,7 @@ from .client import JupiterClient
 from . import transforms as tf
 from .schemas.swap import QuoteResponse, SwapRequest, SwapResponse, SwapInstructionsResponse
 from .schemas.ultra import HoldingsResponse, NativeHoldingsResponse, MintInformation as UltraMintInformation, OrderGetResponse as UltraOrderResponse
-from .schemas.trigger import CreateOrdersRequestBody as TriggerCreateRequest, CreateOrderPostResponse as TriggerTransactionResponse, CancelOrderPostRequest as TriggerCancelRequest, CancelOrdersRequestBody as TriggerCancelManyRequest, GetTriggerOrdersGetResponse
+from .schemas.trigger import CreateOrdersRequestBody as TriggerCreateRequest, CreateOrderPostResponse as TriggerTransactionResponse, CancelOrderPostRequest as TriggerCancelRequest, CancelOrdersRequestBody as TriggerCancelManyRequest, CancelOrdersPostResponse as TriggerCancelManyResponse, GetTriggerOrdersGetResponse
 from .schemas.recurring import CreateRecurring as RecurringCreateRequest, RecurringResponse, CloseRecurring as RecurringCloseRequest
 from .schemas.token_v2 import MintInformation as TokenMintInformation
 from .schemas.price_v3 import FieldDatamodelCodeGeneratorRootSpecialGetResponse1 as PriceItem
@@ -197,11 +197,10 @@ class JupiterService:
         network: str = "mainnet",
     ) -> Dict[str, Any]:
         raw = self.client.post("trigger", "/cancelOrders", body.model_dump())
-        # Response here returns { requestId, transactions: [base64...] }
-        out: Dict[str, Any] = {"jupiterResponse": raw}
-        #TODO Model validate the response
+        resp = TriggerCancelManyResponse.model_validate(raw)
+        out: Dict[str, Any] = {"jupiterResponse": resp.model_dump()}
         if simulate:
-            txs: List[str] = raw.get("transactions") if isinstance(raw, dict) else []
+            txs: List[str] = resp.transactions
             if isinstance(txs, list):
                 sargs = self._sim_args(simulate_opts)
                 sims = [self.helius.simulate_transaction(tx, network=network, **sargs) for tx in txs]
